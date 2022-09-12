@@ -2,13 +2,29 @@ import random
 import sys
 from datetime import datetime
 
+import pandas
+
 from binance_trade_bot.auto_trader import AutoTrader
 
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+import matplotlib
+# matplotlib.use('Agg')
+import pandas as pd
 
 class Strategy(AutoTrader):
     def initialize(self):
         super().initialize()
         self.initialize_current_coin()
+
+        # my stuff
+        self.history = pd.DataFrame(columns=['time','price'])
+        self.fig = plt.figure()
+        self.ax1 = self.fig.add_subplot(1,1,1)
+        plt.ion()
+        plt.show()
+        plt.draw()
 
     def scout(self):
         """
@@ -29,7 +45,22 @@ class Strategy(AutoTrader):
             self.logger.info("Skipping scouting... current coin {} not found".format(current_coin + self.config.BRIDGE))
             return
 
-        self._jump_to_best_coin(current_coin, current_coin_price)
+        # my stuff
+        self.history = pandas.concat(
+            [self.history, pd.DataFrame({'time': [datetime.now()], 'price': [current_coin_price]})])
+        self.history.reset_index(inplace=True, drop=True)
+        print(self.history)
+        if len(self.history) > 10:
+            self.history.drop(index=0, inplace=True)
+        print(self.history)
+
+        if len(self.history) < 2:
+            return
+        else:
+            self.ax1.clear()
+            self.history.plot('time', 'price', ax=self.ax1, color='k')
+            plt.draw()
+            plt.pause(0.001)
 
     def bridge_scout(self):
         current_coin = self.db.get_current_coin()

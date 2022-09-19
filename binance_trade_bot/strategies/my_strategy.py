@@ -13,6 +13,13 @@ import matplotlib
 # matplotlib.use('Agg')
 import pandas as pd
 
+def ema(value_now, ema_prev, period, smoothing=2.0):
+    """
+    Calculate exponential moving average
+    """
+    ema_now = value_now*(smoothing/(1+period)) + ema_prev*(1-(smoothing/(1+period)))
+    return ema_now
+
 class Strategy(AutoTrader):
     def initialize(self):
         super().initialize()
@@ -20,8 +27,7 @@ class Strategy(AutoTrader):
 
         # my stuff
         self.history = pd.DataFrame(columns=['time','price'])
-        self.fig = plt.figure()
-        self.ax1 = self.fig.add_subplot(1,1,1)
+        self.fig, (self.ax1, self.ax2, self.ax3) = plt.subplots(3,1)
         plt.ion()
         plt.show()
         plt.draw()
@@ -46,21 +52,70 @@ class Strategy(AutoTrader):
             return
 
         # my stuff
-        self.history = pandas.concat(
-            [self.history, pd.DataFrame({'time': [datetime.now()], 'price': [current_coin_price]})])
+        self.history = pandas.concat([
+            self.history,
+            pd.DataFrame({
+                'time': [datetime.now()],
+                'price': [current_coin_price],
+                'ema_26': [current_coin_price],
+                'ema_12': [current_coin_price],
+                'macd': [0.0],
+                'macd_sma': [0.0],
+                'money_gbp':[1000.0],
+                'money_btc': [0.0],
+            })])
         self.history.reset_index(inplace=True, drop=True)
-        print(self.history)
-        if len(self.history) > 10:
+        if len(self.history) > 100:
             self.history.drop(index=0, inplace=True)
-        print(self.history)
 
         if len(self.history) < 2:
             return
         else:
+            # ema
+            ind_last = self.history.index[-1]
+            self.history.loc[ind_last, 'ema_26'] = ema(current_coin_price, self.history.iloc[-2]['ema_26'], 26)
+            self.history.loc[ind_last, 'ema_12'] = ema(current_coin_price, self.history.iloc[-2]['ema_12'], 12)
+            self.history.loc[ind_last, 'macd'] = self.history.loc[ind_last, 'ema_12'] - self.history.loc[ind_last, 'ema_26']
+            self.history.loc[ind_last, 'macd_sma'] = ema(self.history.iloc[-1]['macd'], self.history.iloc[-2]['macd_sma'], 9)
+            self.history.loc[ind_last, 'sig_diff'] = self.history.loc[ind_last, 'macd'] - self.history.loc[ind_last, 'macd_sma']
+            crossed = self.history.iloc[-1]['sig_diff']*self.history.iloc[-2]['sig_diff'] < 0
+            slope = self.history.iloc[-1]['sig_diff'] - self.history.iloc[-2]['sig_diff']
+            self.history.loc[ind_last, 'money_gbp'] = self.history.iloc[-2]['money_gbp']
+            self.history.loc[ind_last, 'money_btc'] = self.history.iloc[-2]['money_btc']
+
+            if crossed:
+                if slope < 0 and self.history.loc[ind_last, 'macd'] > -1:
+                    # sell condition
+                    self.history.loc[ind_last, 'buy_sell'] = -1
+
+                    if self.history.iloc[-2]['money_btc'] > 0:
+                        self.history.loc[ind_last, 'money_gbp'] = self.history.iloc[-2]['money_btc'] * current_coin_price
+                        self.history.loc[ind_last, 'money_btc'] = 0
+                elif slope > 0 and self.history.loc[ind_last, 'macd'] < 1:
+                    # buy condition
+                    self.history.loc[ind_last, 'buy_sell'] = 1
+
+                    if self.history.iloc[-2]['money_gbp'] > 0:
+                        self.history.loc[ind_last, 'money_btc'] = self.history.iloc[-2]['money_gbp'] / current_coin_price
+                        self.history.loc[ind_last, 'money_gbp'] = 0
+            else:
+                self.history.loc[ind_last, 'buy_sell'] = 0
+
+            self.history.loc[ind_last, 'money'] = (self.history.loc[ind_last, 'money_gbp'] + self.history.loc[ind_last, 'money_btc']*current_coin_price)-1000.0
+
+            # plotting
             self.ax1.clear()
-            self.history.plot('time', 'price', ax=self.ax1, color='k')
+            self.history.plot('time', ['price', 'ema_26', 'ema_12'], ax=self.ax1, color=['k', 'b', 'r'])
+            self.ax2.clear()
+            self.ax2.plot(self.history['time'], [0.0]*len(self.history), color='k', linestyle='--')
+            self.history.plot('time', ['macd','macd_sma','buy_sell'], ax=self.ax2, color=['b','y','g'])
+            self.ax3.clear()
+            self.history.plot('time', 'money', ax=self.ax3, color='g')
+
             plt.draw()
             plt.pause(0.001)
+
+
 
     def bridge_scout(self):
         current_coin = self.db.get_current_coin()
